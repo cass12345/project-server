@@ -1,0 +1,247 @@
+
+# DSCI 320 Milestone II: Code & Dashboard #
+
+By Selena Shew, Cassandra Zhang, Jamie Jiang
+
+Group CSJ
+
+December 2, 2023
+## Data Cleaning ##
+#first I will read in the data
+import pandas as pd
+
+airbnb = pd.read_csv("airbnb.csv", parse_dates=['host_since'])
+airbnb.head()
+#Then I will clean up the data
+
+#I need to drop all of the columns we won't be using
+#I need to filter and rename the property types for simplicity
+#I will also rename the room types and superhost designation for ease of understanding
+#I will need to remove our weird outliers (we have two data points with a daily rate bigger than $3,000 while everthing else is cheaper)
+#I also need to drop any rows with missing (NA) values
+
+#keep only the columns we want to examine
+airbnb_cleaned = airbnb[['accommodates','price', 'bathrooms', 'beds', 'number_of_reviews', 'neighbourhood_cleansed',
+                        'property_type', 'host_is_superhost', 'review_scores_rating', 'room_type', 
+                         'host_response_time', 'host_since', 'latitude', 'longitude']]
+
+#filter to keep only the main property types and rename
+keep_prop_types = ['Entire condo', 'Entire rental unit', 'Entire guest suite', 'Entire home', 'Entire townhouse',
+             'Private room in condo', 'Private room in home', 'Private room in rental unit',
+             'Private room in guest suite', 'Private room in townhouse']
+
+airbnb_cleaned = airbnb_cleaned.query(
+    'property_type == @keep_prop_types'
+).replace(
+     {'Entire condo': 'Condo',
+      'Private room in condo': 'Condo',
+      'Entire rental unit': 'Rental Suite',
+      'Private room in rental unit': 'Rental Suite',
+      'Entire guest suite': 'Guest Suite',
+      'Private room in guest suite': 'Guest Suite',
+      'Entire home': 'House',
+      'Private room in home': 'House',
+      'Entire townhouse': 'Townhouse',
+      'Private room in townhouse': 'Townhouse'
+    }
+)
+
+#clean the room types & superhost designation
+airbnb_cleaned = airbnb_cleaned.replace(
+    {"Entire home/apt": 'Entire place',
+    't': 'True',
+    'f': 'False'}
+)
+
+#remove the dollar sign from the price column
+airbnb_cleaned['price'] = airbnb_cleaned['price'].str.replace(',', '').str.replace('$', '').astype(float)
+
+#filter out the outlier: where price is greater than $8,000
+airbnb_cleaned = airbnb_cleaned.query('price <= 3000.0')
+
+#finally, I'll drop all rows with missing values
+airbnb_cleaned = airbnb_cleaned.dropna()
+
+airbnb_cleaned.head()
+airbnb_cleaned.shape
+airbnb_cleaned.describe()
+#Finally I will export the cleaned dataframe to csv so that my group members can use it
+airbnb_cleaned.to_csv('cleaned_airbnb_data_final.csv', index=False)
+## Task 1: Exploring how the daily rate of the AirBnB varies with the number of beds, bathrooms, and people that can be accommodated. ##
+import altair as alt
+import geojson
+# Handle large data sets without embedding them in the notebook
+#alt.data_transformers.enable('data_server')
+import vegafusion as vf
+vf.enable_widget()
+# Default Rendering
+alt.renderers.enable('default')
+slider2 = alt.binding_range(min=0.1, max = 1.0, step=0.1, name='Opacity:')
+
+op_opacity = alt.param(value = 0.7, bind=slider2)
+
+brush_select = alt.selection_interval(encodings = ['x'], empty = False)
+
+task_1 = alt.Chart(airbnb_cleaned, width = 400, height = 250, title = "Task 1: Daily Price Vs. Number of Beds, Bathrooms, People Accommodated").mark_circle(opacity=op_opacity, stroke='black', strokeWidth=0.5).encode(
+    x = alt.X("beds:Q", axis=alt.Axis(grid=False, ticks=False)).title("Number of Beds"),
+    y = alt.Y("price:Q", axis=alt.Axis(grid=False, ticks=False)).title("Price Per Day"),
+    size = alt.Size("bathrooms:Q").title("Number of Bathrooms"),
+    color = alt.condition(brush_select, 'accommodates:Q', alt.value('lightgray')),
+    tooltip = alt.Tooltip(['price:Q', 'beds:Q', 'bathrooms:Q', 'accommodates:Q'])
+).add_params(
+    op_opacity,
+    brush_select
+)
+
+task_1
+The plot above shows how the price changes with the number of beds and bathrooms available. There is a selection interval as well as an opacity slider to more easily see the individual points that are overlapping.
+accomm_chart = alt.Chart(airbnb_cleaned, width = 400, height = 250, title = "Daily Price Vs. Number of People Accommodated").mark_circle(size=150, stroke='black', strokeWidth=1).encode(
+    x = alt.X("accommodates:Q", axis=alt.Axis(grid=False, ticks=False), scale=alt.Scale(zero=False)).title("Number of People Accommodated"),
+    y = alt.Y("price:Q", axis=alt.Axis(grid=False, ticks=False), scale=alt.Scale(zero=False)).title("Price Per Day"),
+    tooltip = alt.Tooltip(['price:Q', 'accommodates:Q'])
+)
+
+accomm_chart
+The plot above shows how the price varies with the number of people that can be acommodated.
+task_1_vis = accomm_chart.encode(color = alt.condition(brush_select, alt.value('#4ba670'), alt.value('lightgray'))).add_params(brush_select) | task_1
+
+task_1_vis
+Now we have put both plots together to address the task. There is bidirectional linking between them via a selection interval, which shows the corresponding number of people that can be acommodated alongside the corresponding number of beds and bathrooms available for each listing.
+## Task 2: Exploring how the property type and room type of the AirBnB affects the review ratings. ##
+brush = alt.selection_interval(encodings = ['y'], empty = True)
+
+selection = alt.selection_point(fields=['room_type'])
+color = alt.condition(
+    selection,
+    alt.Color('room_type:N').legend(None),
+    alt.value('lightgray')
+)
+
+tick_plot = alt.Chart(airbnb_cleaned, title = "Task 2: Exploring How Review Ratings Vary With Different Property and Room Types").mark_tick(size = 20).encode(
+    x = alt.X('property_type:N', title="Property Type",axis=alt.Axis(labelAngle=-45)),
+    y = alt.Y('review_scores_rating', title= "Review Scores"),
+    color = color
+).properties(
+    width = 400,
+    height = 250
+).add_params(brush)
+
+legend = alt.Chart(airbnb_cleaned).mark_point().encode(
+    alt.Y('room_type:N', axis=alt.Axis(orient='right')),
+    color=color
+).add_params(
+    selection
+)
+
+bars = alt.Chart(airbnb_cleaned, title = "Count of Combination of Property & Room Types").mark_bar().encode(
+    x= alt.X('count():Q', title = "Counts of the combination"),
+    y= alt.Y('property_type:N', title = "Property Type"),
+    color='room_type:N',
+    tooltip=['property_type:N', 'count():Q', 'room_type:N']
+).properties(
+    width=400,
+    height=250
+).transform_filter(
+    brush
+)
+
+task_2_vis = tick_plot|legend|bars
+
+task_2_vis
+Task 2 is addressed on the left, and can be filtered by the room type. The plot on the right shows the counts for each combination of property and room type.
+## Task 3: Exploring how the AirBnB host’s response time as well as whether they are a designated superhost or not affects their review ratings & number of reviews. ##
+selection = alt.selection_point(fields=['host_is_super_host', 'host_response_time'])
+color = alt.condition(
+    selection,
+    alt.Color('host_is_superhost:N').legend(None),
+    alt.value('lightgray')
+)
+
+scatter = alt.Chart(airbnb_cleaned, title = "Task 3: How Review Ratings Vary With Number of Reviews, Host Response Time, & Superhost Status").mark_point(size=88).encode(
+    x='number_of_reviews:Q',
+    y='review_scores_rating:Q',
+    color=color,
+).properties(
+    width = 400,
+    height = 250
+)
+
+legend = alt.Chart(airbnb_cleaned, title= "Filter Combo of Host Response Time & Superhost Status").mark_rect().encode(
+    alt.Y('host_is_superhost').axis(orient='right'),
+    x=alt.X('host_response_time',axis=alt.Axis(labelAngle=-45)),
+    color=color
+).add_params(
+    selection
+).properties(
+    width = 400,
+    height = 100
+)
+
+task_3_vis = scatter | legend
+
+task_3_vis
+Here, the filter on the right shows the number as well as review rating for each AirBnB on the left, depending on the host response time and whether the host is a designated superhost or not.
+## Task 4: Exploring how the daily rate of the AirBnB varies with the neighbourhood location and room type. ##
+First we needed to get the geographical map of Vancouver. We found the relevant geojson file here: https://github.com/blackmad/neighborhoods/blob/master/vancouver.geojson
+can_prov_file = 'vancouver.geojson'
+with open(can_prov_file) as f:
+    var_geojson = geojson.load(f)
+data_geojson = alt.InlineData(values=var_geojson, format=alt.DataFormat(property='features',type='json'))
+
+# chart object
+vancouver = alt.Chart(data_geojson).mark_geoshape(fill='lightgray',
+    stroke='white'
+).project(
+    type='identity', reflectY=True
+).properties(height=300, width = 800) 
+points = alt.Chart(airbnb_cleaned).mark_circle(size=30,opacity=0.8).encode(
+    latitude='latitude:Q',
+    longitude='longitude:Q',
+    color=alt.Color('review_scores_rating', scale = alt.Scale(scheme='plasma',domain=[5,4]),
+                   legend = alt.LegendConfig(orient = 'bottom')).title('Review Rating'),  
+    tooltip=[alt.Tooltip('review_scores_rating', title='Review Rating'), alt.Tooltip('neighbourhood_cleansed', title='Neighbourhood')]
+)
+
+
+
+vancouver_map = vancouver + points
+
+#vancouver_map
+genres = ['Entire place', 'Private room']
+
+room_type_dropdown = alt.binding_select(options=genres, name="Room Type")
+room_type_select = alt.selection_point(fields=['room_type'], bind=room_type_dropdown)
+
+filter_genres = points.add_params(
+    room_type_select
+).transform_filter(
+    room_type_select
+).properties(title="Task 4: How Airbnb Ratings Vary With Neighbourhood & Room Type")
+
+map_review_rating = vancouver + filter_genres
+map_review_rating
+The map above shows the review ratings for each AirBnB in Vancouver. There is a filter option to show the review ratings for just each room type.
+heat_map = alt.Chart(airbnb_cleaned).mark_rect().encode(
+    color = alt.Color('mean(review_scores_rating)',scale = alt.Scale(scheme='plasma',domain = [5,4]), legend = None),
+    x = alt.X('neighbourhood_cleansed', axis=alt.Axis(labelAngle=-45)).title('Neighbourhood'),
+    y = alt.Y('room_type').title('Room Type'),
+    tooltip=alt.Tooltip(['mean(review_scores_rating)'], format='.2f')
+).properties(height = 60, width = 800)
+heat_map
+The heat map shown above displays the average review rating for each combination of room type and neighbourhood.
+task_4_vis = alt.vconcat(map_review_rating, heat_map)
+task_4_vis
+The final image above combines both visualizations together to answer Task 2.
+## Final Dashboard ##
+
+Here we put all of our visualizations together:
+# dashboard = alt.vconcat(task_1_vis, task_3_vis, task_4_vis, task_2_vis)
+
+# dashboard
+
+display(task_1_vis)
+display(task_2_vis)
+display(task_3_vis)
+display(map_review_rating)
+display(heat_map)
+*Please note that we did not use the alt.vconcat() or alt.hconcat() methods as that caused our sliders, buttons, and filters to randomly migrate to the bottom.
